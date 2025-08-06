@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card } from '@/components/ui/card';
-import { Camera, Settings, Download, RotateCcw, Info } from 'lucide-react';
+import { Camera, Settings, Download, RotateCcw, Info, X, Play, Square, Shuffle } from 'lucide-react';
 
 // ASCII character presets
 const ASCII_PRESETS = {
@@ -24,10 +24,29 @@ const ASCII_PRESETS = {
   'Block Tech': '□▪▫■▲▼◆◼◻'
 };
 
+// Google Fonts monospace selection
+const MONOSPACE_FONTS = [
+  'JetBrains Mono',
+  'Fira Code',
+  'Source Code Pro',
+  'Roboto Mono',
+  'Ubuntu Mono',
+  'Inconsolata',
+  'Space Mono',
+  'IBM Plex Mono',
+  'PT Mono',
+  'Courier Prime',
+  'Anonymous Pro',
+  'Overpass Mono',
+  'Share Tech Mono',
+  'Nova Mono',
+  'VT323',
+  'Major Mono Display'
+];
+
 interface Settings {
   fontSize: number;
   letterSpacing: number;
-  pixelStep: number;
   contrast: number;
   brightness: number;
   saturation: number;
@@ -36,13 +55,32 @@ interface Settings {
   foregroundColor: string;
   backgroundColor: string;
   asciiSet: string;
+  fontFamily: string;
   showStats: boolean;
+}
+
+interface RandomSettings {
+  enabled: boolean;
+  interval: number;
+  autoMode: boolean;
+  controls: {
+    fontSize: boolean;
+    letterSpacing: boolean;
+    contrast: boolean;
+    brightness: boolean;
+    saturation: boolean;
+    invert: boolean;
+    grayscale: boolean;
+    foregroundColor: boolean;
+    backgroundColor: boolean;
+    asciiSet: boolean;
+    fontFamily: boolean;
+  };
 }
 
 const DEFAULT_SETTINGS: Settings = {
   fontSize: 8,
   letterSpacing: 0,
-  pixelStep: 6,
   contrast: 100,
   brightness: 100,
   saturation: 100,
@@ -51,7 +89,27 @@ const DEFAULT_SETTINGS: Settings = {
   foregroundColor: '#00ff00',
   backgroundColor: '#000000',
   asciiSet: '@#%*+=-:. ',
+  fontFamily: 'JetBrains Mono',
   showStats: false
+};
+
+const DEFAULT_RANDOM_SETTINGS: RandomSettings = {
+  enabled: false,
+  interval: 2000,
+  autoMode: false,
+  controls: {
+    fontSize: true,
+    letterSpacing: true,
+    contrast: true,
+    brightness: true,
+    saturation: true,
+    invert: true,
+    grayscale: true,
+    foregroundColor: true,
+    backgroundColor: true,
+    asciiSet: true,
+    fontFamily: true,
+  }
 };
 
 export const AsciiConverter: React.FC = () => {
@@ -59,14 +117,18 @@ export const AsciiConverter: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const asciiRef = useRef<HTMLPreElement>(null);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [randomSettings, setRandomSettings] = useState<RandomSettings>(DEFAULT_RANDOM_SETTINGS);
   const [isPlaying, setIsPlaying] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [stats, setStats] = useState({ fps: 0, resolution: '' });
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [autoSizing, setAutoSizing] = useState({ fontSize: true, letterSpacing: true });
+  const [pixelStep] = useState(6); // Fixed internal value
   
   const frameRef = useRef<number>();
   const lastFrameTime = useRef<number>(0);
   const frameCount = useRef<number>(0);
+  const randomIntervalRef = useRef<number>();
 
   // Load settings from localStorage
   useEffect(() => {
@@ -126,6 +188,42 @@ export const AsciiConverter: React.FC = () => {
     return chars[Math.max(0, Math.min(index, chars.length - 1))];
   }, [settings.invert]);
 
+  // Auto-sizing logic
+  const calculateAutoSize = useCallback(() => {
+    if (!videoRef.current) return;
+    
+    const video = videoRef.current;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    
+    if (video.videoWidth && video.videoHeight) {
+      const rows = Math.floor(video.videoHeight / pixelStep);
+      const cols = Math.floor(video.videoWidth / pixelStep);
+      
+      let newFontSize = settings.fontSize;
+      let newLetterSpacing = settings.letterSpacing;
+      
+      if (autoSizing.fontSize) {
+        newFontSize = viewportHeight / rows;
+      }
+      
+      if (autoSizing.letterSpacing) {
+        const glyphAspect = 0.6; // Typical monospace ratio
+        const naturalGlyphWidth = newFontSize * glyphAspect;
+        const targetSpacing = (viewportWidth / cols) - naturalGlyphWidth;
+        newLetterSpacing = Math.max(-2, Math.min(8, targetSpacing / newFontSize));
+      }
+      
+      if (newFontSize !== settings.fontSize || newLetterSpacing !== settings.letterSpacing) {
+        setSettings(prev => ({
+          ...prev,
+          fontSize: Math.max(4, Math.min(128, newFontSize)),
+          letterSpacing: newLetterSpacing
+        }));
+      }
+    }
+  }, [settings.fontSize, settings.letterSpacing, autoSizing, pixelStep]);
+
   // Process video frame to ASCII
   const processFrame = useCallback(() => {
     if (!videoRef.current || !canvasRef.current || !asciiRef.current || !isPlaying) {
@@ -139,8 +237,8 @@ export const AsciiConverter: React.FC = () => {
     if (!ctx || video.readyState !== 4) return;
 
     // Set canvas size based on pixel step
-    const width = Math.floor(video.videoWidth / settings.pixelStep);
-    const height = Math.floor(video.videoHeight / settings.pixelStep);
+    const width = Math.floor(video.videoWidth / pixelStep);
+    const height = Math.floor(video.videoHeight / pixelStep);
     
     canvas.width = width;
     canvas.height = height;
@@ -198,7 +296,7 @@ export const AsciiConverter: React.FC = () => {
 
     // Schedule next frame
     frameRef.current = requestAnimationFrame(processFrame);
-  }, [settings, isPlaying, pixelToAscii]);
+  }, [settings, isPlaying, pixelToAscii, pixelStep]);
 
   // Start/stop processing
   useEffect(() => {
@@ -265,9 +363,86 @@ export const AsciiConverter: React.FC = () => {
     setSettings(DEFAULT_SETTINGS);
   }, []);
 
+  // Randomization functions
+  const randomizeSettings = useCallback(() => {
+    if (!randomSettings.enabled) return;
+    
+    setSettings(prev => {
+      const newSettings = { ...prev };
+      
+      if (randomSettings.controls.fontSize) {
+        newSettings.fontSize = Math.floor(Math.random() * (32 - 4)) + 4;
+        setAutoSizing(prev => ({ ...prev, fontSize: false }));
+      }
+      if (randomSettings.controls.letterSpacing) {
+        newSettings.letterSpacing = (Math.random() * 10) - 2;
+        setAutoSizing(prev => ({ ...prev, letterSpacing: false }));
+      }
+      if (randomSettings.controls.contrast) {
+        newSettings.contrast = Math.floor(Math.random() * 400);
+      }
+      if (randomSettings.controls.brightness) {
+        newSettings.brightness = Math.floor(Math.random() * 400);
+      }
+      if (randomSettings.controls.saturation) {
+        newSettings.saturation = Math.floor(Math.random() * 400);
+      }
+      if (randomSettings.controls.invert) {
+        newSettings.invert = Math.random() > 0.5;
+      }
+      if (randomSettings.controls.grayscale) {
+        newSettings.grayscale = Math.random() > 0.5;
+      }
+      if (randomSettings.controls.foregroundColor) {
+        newSettings.foregroundColor = `#${Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')}`;
+      }
+      if (randomSettings.controls.backgroundColor) {
+        newSettings.backgroundColor = `#${Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')}`;
+      }
+      if (randomSettings.controls.asciiSet) {
+        const presets = Object.values(ASCII_PRESETS);
+        newSettings.asciiSet = presets[Math.floor(Math.random() * presets.length)];
+      }
+      if (randomSettings.controls.fontFamily) {
+        newSettings.fontFamily = MONOSPACE_FONTS[Math.floor(Math.random() * MONOSPACE_FONTS.length)];
+      }
+      
+      return newSettings;
+    });
+  }, [randomSettings]);
+
+  const startAutoRandomize = useCallback(() => {
+    if (randomIntervalRef.current) {
+      clearInterval(randomIntervalRef.current);
+    }
+    
+    setRandomSettings(prev => ({ ...prev, autoMode: true }));
+    randomIntervalRef.current = window.setInterval(randomizeSettings, randomSettings.interval);
+  }, [randomizeSettings, randomSettings.interval]);
+
+  const stopAutoRandomize = useCallback(() => {
+    if (randomIntervalRef.current) {
+      clearInterval(randomIntervalRef.current);
+      randomIntervalRef.current = undefined;
+    }
+    setRandomSettings(prev => ({ ...prev, autoMode: false }));
+  }, []);
+
+  // Auto-sizing on video load and resize
+  useEffect(() => {
+    calculateAutoSize();
+    window.addEventListener('resize', calculateAutoSize);
+    return () => window.removeEventListener('resize', calculateAutoSize);
+  }, [calculateAutoSize]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
+      // Don't trigger shortcuts when typing in input fields
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      
       if (e.key === 'Escape') {
         setSidebarOpen(prev => !prev);
       } else if (e.key === 's' || e.key === 'S') {
@@ -275,13 +450,13 @@ export const AsciiConverter: React.FC = () => {
         saveSnapshot();
       } else if (e.key === 'r' || e.key === 'R') {
         e.preventDefault();
-        // Randomize could be implemented here
+        randomizeSettings();
       }
     };
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [saveSnapshot]);
+  }, [saveSnapshot, randomizeSettings]);
 
   return (
     <div className="min-h-screen bg-background text-foreground overflow-hidden relative">
@@ -302,8 +477,9 @@ export const AsciiConverter: React.FC = () => {
       <div className="fixed inset-0 flex items-center justify-center">
         <pre
           ref={asciiRef}
-          className="font-terminal leading-none whitespace-pre overflow-hidden select-none animate-flicker"
+          className="leading-none whitespace-pre overflow-hidden select-none animate-flicker"
           style={{
+            fontFamily: settings.fontFamily,
             fontSize: `${settings.fontSize}px`,
             letterSpacing: `${settings.letterSpacing}em`,
             color: settings.foregroundColor,
@@ -337,213 +513,290 @@ export const AsciiConverter: React.FC = () => {
         className="fixed top-4 right-4 z-50 bg-card/80 backdrop-blur border-primary/30 hover:border-primary hover:shadow-terminal"
         onClick={() => setSidebarOpen(!sidebarOpen)}
       >
-        <Settings className="w-4 h-4" />
+        {sidebarOpen ? <X className="w-4 h-4" /> : <Settings className="w-4 h-4" />}
       </Button>
 
       {/* Control Sidebar */}
       {sidebarOpen && (
         <div className="fixed top-0 right-0 h-full w-80 bg-gradient-sidebar border-l border-border backdrop-blur-xl z-40 overflow-y-auto p-6 space-y-6">
-          <div className="text-center mb-6">
-            <h1 className="text-2xl font-bold text-primary mb-2">ASCII Art</h1>
-            <p className="text-sm text-muted-foreground">Real-time webcam converter</p>
+          {/* Font Controls */}
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-primary">Font</h3>
+            <div>
+              <Label htmlFor="fontFamily">Font Family</Label>
+              <Select
+                value={settings.fontFamily}
+                onValueChange={(value) => setSettings(prev => ({ ...prev, fontFamily: value }))}
+              >
+                <SelectTrigger className="mt-2">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MONOSPACE_FONTS.map(font => (
+                    <SelectItem key={font} value={font} style={{ fontFamily: font }}>
+                      {font}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="fontSize">Font Size: {settings.fontSize.toFixed(1)}px</Label>
+              <Slider
+                id="fontSize"
+                min={4}
+                max={128}
+                step={0.1}
+                value={[settings.fontSize]}
+                onValueChange={([value]) => {
+                  setSettings(prev => ({ ...prev, fontSize: value }));
+                  setAutoSizing(prev => ({ ...prev, fontSize: false }));
+                }}
+                className="mt-2"
+              />
+            </div>
+            <div>
+              <Label htmlFor="letterSpacing">Letter Spacing: {settings.letterSpacing.toFixed(2)}em</Label>
+              <Slider
+                id="letterSpacing"
+                min={-2}
+                max={8}
+                step={0.01}
+                value={[settings.letterSpacing]}
+                onValueChange={([value]) => {
+                  setSettings(prev => ({ ...prev, letterSpacing: value }));
+                  setAutoSizing(prev => ({ ...prev, letterSpacing: false }));
+                }}
+                className="mt-2"
+              />
+            </div>
           </div>
 
-          {/* Geometry Controls */}
-          <Card className="p-4">
-            <h3 className="text-lg font-semibold mb-4 text-primary">Geometry</h3>
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="fontSize">Font Size: {settings.fontSize}px</Label>
-                <Slider
-                  id="fontSize"
-                  min={4}
-                  max={32}
-                  step={1}
-                  value={[settings.fontSize]}
-                  onValueChange={([value]) => setSettings(prev => ({ ...prev, fontSize: value }))}
-                  className="mt-2"
-                />
-              </div>
-              <div>
-                <Label htmlFor="letterSpacing">Letter Spacing: {settings.letterSpacing}em</Label>
-                <Slider
-                  id="letterSpacing"
-                  min={-2}
-                  max={2}
-                  step={0.1}
-                  value={[settings.letterSpacing]}
-                  onValueChange={([value]) => setSettings(prev => ({ ...prev, letterSpacing: value }))}
-                  className="mt-2"
-                />
-              </div>
-              <div>
-                <Label htmlFor="pixelStep">Pixel Step: {settings.pixelStep}</Label>
-                <Slider
-                  id="pixelStep"
-                  min={1}
-                  max={16}
-                  step={1}
-                  value={[settings.pixelStep]}
-                  onValueChange={([value]) => setSettings(prev => ({ ...prev, pixelStep: value }))}
-                  className="mt-2"
-                />
-              </div>
-            </div>
-          </Card>
-
           {/* Visual Controls */}
-          <Card className="p-4">
-            <h3 className="text-lg font-semibold mb-4 text-primary">Visual</h3>
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="contrast">Contrast: {settings.contrast}%</Label>
-                <Slider
-                  id="contrast"
-                  min={0}
-                  max={400}
-                  step={10}
-                  value={[settings.contrast]}
-                  onValueChange={([value]) => setSettings(prev => ({ ...prev, contrast: value }))}
-                  className="mt-2"
-                />
-              </div>
-              <div>
-                <Label htmlFor="brightness">Brightness: {settings.brightness}%</Label>
-                <Slider
-                  id="brightness"
-                  min={0}
-                  max={400}
-                  step={10}
-                  value={[settings.brightness]}
-                  onValueChange={([value]) => setSettings(prev => ({ ...prev, brightness: value }))}
-                  className="mt-2"
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <Label htmlFor="invert">Invert Luminance</Label>
-                <Switch
-                  id="invert"
-                  checked={settings.invert}
-                  onCheckedChange={(checked) => setSettings(prev => ({ ...prev, invert: checked }))}
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <Label htmlFor="grayscale">Force Grayscale</Label>
-                <Switch
-                  id="grayscale"
-                  checked={settings.grayscale}
-                  onCheckedChange={(checked) => setSettings(prev => ({ ...prev, grayscale: checked }))}
-                />
-              </div>
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-primary">Visual</h3>
+            <div>
+              <Label htmlFor="contrast">Contrast: {settings.contrast}%</Label>
+              <Slider
+                id="contrast"
+                min={0}
+                max={400}
+                step={10}
+                value={[settings.contrast]}
+                onValueChange={([value]) => setSettings(prev => ({ ...prev, contrast: value }))}
+                className="mt-2"
+              />
             </div>
-          </Card>
+            <div>
+              <Label htmlFor="brightness">Brightness: {settings.brightness}%</Label>
+              <Slider
+                id="brightness"
+                min={0}
+                max={400}
+                step={10}
+                value={[settings.brightness]}
+                onValueChange={([value]) => setSettings(prev => ({ ...prev, brightness: value }))}
+                className="mt-2"
+              />
+            </div>
+            <div>
+              <Label htmlFor="saturation">Saturation: {settings.saturation}%</Label>
+              <Slider
+                id="saturation"
+                min={0}
+                max={400}
+                step={10}
+                value={[settings.saturation]}
+                onValueChange={([value]) => setSettings(prev => ({ ...prev, saturation: value }))}
+                className="mt-2"
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="invert">Invert Luminance</Label>
+              <Switch
+                id="invert"
+                checked={settings.invert}
+                onCheckedChange={(checked) => setSettings(prev => ({ ...prev, invert: checked }))}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="grayscale">Force Grayscale</Label>
+              <Switch
+                id="grayscale"
+                checked={settings.grayscale}
+                onCheckedChange={(checked) => setSettings(prev => ({ ...prev, grayscale: checked }))}
+              />
+            </div>
+          </div>
 
           {/* Color Controls */}
-          <Card className="p-4">
-            <h3 className="text-lg font-semibold mb-4 text-primary">Colors</h3>
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="foregroundColor">ASCII Color</Label>
-                <Input
-                  id="foregroundColor"
-                  type="color"
-                  value={settings.foregroundColor}
-                  onChange={(e) => setSettings(prev => ({ ...prev, foregroundColor: e.target.value }))}
-                  className="mt-2 h-12"
-                />
-              </div>
-              <div>
-                <Label htmlFor="backgroundColor">Background Color</Label>
-                <Input
-                  id="backgroundColor"
-                  type="color"
-                  value={settings.backgroundColor}
-                  onChange={(e) => setSettings(prev => ({ ...prev, backgroundColor: e.target.value }))}
-                  className="mt-2 h-12"
-                />
-              </div>
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-primary">Colors</h3>
+            <div>
+              <Label htmlFor="foregroundColor">ASCII Color</Label>
+              <Input
+                id="foregroundColor"
+                type="color"
+                value={settings.foregroundColor}
+                onChange={(e) => setSettings(prev => ({ ...prev, foregroundColor: e.target.value }))}
+                className="mt-2 h-12"
+              />
             </div>
-          </Card>
+            <div>
+              <Label htmlFor="backgroundColor">Background Color</Label>
+              <Input
+                id="backgroundColor"
+                type="color"
+                value={settings.backgroundColor}
+                onChange={(e) => setSettings(prev => ({ ...prev, backgroundColor: e.target.value }))}
+                className="mt-2 h-12"
+              />
+            </div>
+          </div>
 
           {/* ASCII Character Controls */}
-          <Card className="p-4">
-            <h3 className="text-lg font-semibold mb-4 text-primary">ASCII Characters</h3>
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="asciiPreset">Preset</Label>
-                <Select
-                  value={Object.entries(ASCII_PRESETS).find(([_, chars]) => chars === settings.asciiSet)?.[0] || 'Custom'}
-                  onValueChange={(preset) => {
-                    if (preset !== 'Custom' && ASCII_PRESETS[preset as keyof typeof ASCII_PRESETS]) {
-                      setSettings(prev => ({ ...prev, asciiSet: ASCII_PRESETS[preset as keyof typeof ASCII_PRESETS] }));
-                    }
-                  }}
-                >
-                  <SelectTrigger className="mt-2">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.keys(ASCII_PRESETS).map(preset => (
-                      <SelectItem key={preset} value={preset}>{preset}</SelectItem>
-                    ))}
-                    <SelectItem value="Custom">Custom</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="asciiSet">Characters</Label>
-                <Input
-                  id="asciiSet"
-                  value={settings.asciiSet}
-                  onChange={(e) => setSettings(prev => ({ ...prev, asciiSet: e.target.value }))}
-                  className="mt-2 font-mono"
-                  placeholder="Enter ASCII characters..."
-                />
-              </div>
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-primary">ASCII Characters</h3>
+            <div>
+              <Label htmlFor="asciiPreset">Preset</Label>
+              <Select
+                value={Object.entries(ASCII_PRESETS).find(([_, chars]) => chars === settings.asciiSet)?.[0] || 'Custom'}
+                onValueChange={(preset) => {
+                  if (preset !== 'Custom' && ASCII_PRESETS[preset as keyof typeof ASCII_PRESETS]) {
+                    setSettings(prev => ({ ...prev, asciiSet: ASCII_PRESETS[preset as keyof typeof ASCII_PRESETS] }));
+                  }
+                }}
+              >
+                <SelectTrigger className="mt-2">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.keys(ASCII_PRESETS).map(preset => (
+                    <SelectItem key={preset} value={preset}>{preset}</SelectItem>
+                  ))}
+                  <SelectItem value="Custom">Custom</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          </Card>
+            <div>
+              <Label htmlFor="asciiSet">Characters</Label>
+              <Input
+                id="asciiSet"
+                value={settings.asciiSet}
+                onChange={(e) => setSettings(prev => ({ ...prev, asciiSet: e.target.value }))}
+                className="mt-2 font-mono"
+                placeholder="Enter ASCII characters..."
+              />
+            </div>
+          </div>
+
+          {/* Randomization */}
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-primary">Randomization</h3>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="randomEnabled">Enable Random Mode</Label>
+              <Switch
+                id="randomEnabled"
+                checked={randomSettings.enabled}
+                onCheckedChange={(checked) => setRandomSettings(prev => ({ ...prev, enabled: checked }))}
+              />
+            </div>
+            
+            {randomSettings.enabled && (
+              <>
+                <div>
+                  <Label htmlFor="randomInterval">Timer (ms)</Label>
+                  <Input
+                    id="randomInterval"
+                    type="number"
+                    value={randomSettings.interval}
+                    onChange={(e) => setRandomSettings(prev => ({ ...prev, interval: parseInt(e.target.value) || 2000 }))}
+                    className="mt-2"
+                    min="100"
+                    max="60000"
+                  />
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    onClick={randomizeSettings}
+                    variant="outline"
+                    className="w-full"
+                  >
+                    <Shuffle className="w-4 h-4 mr-2" />
+                    Randomize
+                  </Button>
+                  <Button
+                    onClick={randomSettings.autoMode ? stopAutoRandomize : startAutoRandomize}
+                    variant={randomSettings.autoMode ? "destructive" : "default"}
+                    className="w-full"
+                  >
+                    {randomSettings.autoMode ? <Square className="w-4 h-4 mr-2" /> : <Play className="w-4 h-4 mr-2" />}
+                    {randomSettings.autoMode ? 'Stop' : 'Auto'}
+                  </Button>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label>Random Controls</Label>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    {Object.entries(randomSettings.controls).map(([key, enabled]) => (
+                      <div key={key} className="flex items-center space-x-2">
+                        <Switch
+                          checked={enabled}
+                          onCheckedChange={(checked) => setRandomSettings(prev => ({
+                            ...prev,
+                            controls: { ...prev.controls, [key]: checked }
+                          }))}
+                        />
+                        <Label className="text-xs capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}</Label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
 
           {/* Actions */}
-          <Card className="p-4">
-            <h3 className="text-lg font-semibold mb-4 text-primary">Actions</h3>
-            <div className="space-y-3">
-              <Button
-                onClick={saveSnapshot}
-                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Save Snapshot (S)
-              </Button>
-              <Button
-                onClick={resetSettings}
-                variant="outline"
-                className="w-full"
-              >
-                <RotateCcw className="w-4 h-4 mr-2" />
-                Reset Settings
-              </Button>
-              <div className="flex items-center justify-between">
-                <Label htmlFor="showStats">Show Stats</Label>
-                <Switch
-                  id="showStats"
-                  checked={settings.showStats}
-                  onCheckedChange={(checked) => setSettings(prev => ({ ...prev, showStats: checked }))}
-                />
-              </div>
+          <div className="space-y-3">
+            <h3 className="text-lg font-semibold text-primary">Actions</h3>
+            <Button
+              onClick={saveSnapshot}
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Save Snapshot (S)
+            </Button>
+            <Button
+              onClick={resetSettings}
+              variant="outline"
+              className="w-full"
+            >
+              <RotateCcw className="w-4 h-4 mr-2" />
+              Reset Settings
+            </Button>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="showStats">Show Stats</Label>
+              <Switch
+                id="showStats"
+                checked={settings.showStats}
+                onCheckedChange={(checked) => setSettings(prev => ({ ...prev, showStats: checked }))}
+              />
             </div>
-          </Card>
+          </div>
 
           {/* Keyboard Shortcuts */}
-          <Card className="p-4">
-            <h3 className="text-lg font-semibold mb-4 text-primary flex items-center">
+          <div className="space-y-2">
+            <h3 className="text-lg font-semibold text-primary flex items-center">
               <Info className="w-4 h-4 mr-2" />
               Shortcuts
             </h3>
             <div className="text-sm space-y-1 text-muted-foreground">
               <div><kbd className="bg-muted px-1 rounded">S</kbd> Save Snapshot</div>
+              <div><kbd className="bg-muted px-1 rounded">R</kbd> Randomize</div>
               <div><kbd className="bg-muted px-1 rounded">Esc</kbd> Toggle Sidebar</div>
             </div>
-          </Card>
+          </div>
         </div>
       )}
     </div>
