@@ -47,11 +47,13 @@ const MONOSPACE_FONTS = [
 interface Settings {
   fontSize: number;
   letterSpacing: number;
+  lineHeight: number;
   contrast: number;
   brightness: number;
   saturation: number;
   invert: boolean;
   grayscale: boolean;
+  mirrorCamera: boolean;
   foregroundColor: string;
   backgroundColor: string;
   asciiSet: string;
@@ -66,11 +68,13 @@ interface RandomSettings {
   controls: {
     fontSize: boolean;
     letterSpacing: boolean;
+    lineHeight: boolean;
     contrast: boolean;
     brightness: boolean;
     saturation: boolean;
     invert: boolean;
     grayscale: boolean;
+    mirrorCamera: boolean;
     foregroundColor: boolean;
     backgroundColor: boolean;
     asciiSet: boolean;
@@ -81,11 +85,13 @@ interface RandomSettings {
 const DEFAULT_SETTINGS: Settings = {
   fontSize: 8,
   letterSpacing: 0,
+  lineHeight: 1,
   contrast: 100,
   brightness: 100,
   saturation: 100,
   invert: false,
   grayscale: true,
+  mirrorCamera: true,
   foregroundColor: '#00ff00',
   backgroundColor: '#000000',
   asciiSet: '@#%*+=-:. ',
@@ -100,11 +106,13 @@ const DEFAULT_RANDOM_SETTINGS: RandomSettings = {
   controls: {
     fontSize: true,
     letterSpacing: true,
+    lineHeight: true,
     contrast: true,
     brightness: true,
     saturation: true,
     invert: true,
     grayscale: true,
+    mirrorCamera: true,
     foregroundColor: true,
     backgroundColor: true,
     asciiSet: true,
@@ -122,7 +130,7 @@ export const AsciiConverter: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [stats, setStats] = useState({ fps: 0, resolution: '' });
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [autoSizing, setAutoSizing] = useState({ fontSize: true, letterSpacing: true });
+  const [autoSizing, setAutoSizing] = useState({ fontSize: true, letterSpacing: true, lineHeight: true });
   const [pixelStep] = useState(6); // Fixed internal value
   
   const frameRef = useRef<number>();
@@ -188,7 +196,7 @@ export const AsciiConverter: React.FC = () => {
     return chars[Math.max(0, Math.min(index, chars.length - 1))];
   }, [settings.invert]);
 
-  // Auto-sizing logic
+  // Auto-sizing logic for full screen coverage
   const calculateAutoSize = useCallback(() => {
     if (!videoRef.current) return;
     
@@ -200,29 +208,56 @@ export const AsciiConverter: React.FC = () => {
       const rows = Math.floor(video.videoHeight / pixelStep);
       const cols = Math.floor(video.videoWidth / pixelStep);
       
+      // Calculate aspect ratios
+      const videoAspect = video.videoWidth / video.videoHeight;
+      const viewportAspect = viewportWidth / viewportHeight;
+      
       let newFontSize = settings.fontSize;
       let newLetterSpacing = settings.letterSpacing;
+      let newLineHeight = settings.lineHeight;
       
-      if (autoSizing.fontSize) {
-        newFontSize = viewportHeight / rows;
+      // Always fill screen - determine which dimension constrains us
+      if (videoAspect > viewportAspect) {
+        // Video is wider - constrain by width
+        if (autoSizing.fontSize || autoSizing.letterSpacing) {
+          const glyphAspect = 0.6;
+          const charWidth = viewportWidth / cols;
+          newFontSize = charWidth / glyphAspect;
+          newLetterSpacing = 0;
+        }
+        if (autoSizing.lineHeight) {
+          newLineHeight = (viewportHeight / rows) / newFontSize;
+        }
+      } else {
+        // Video is taller - constrain by height
+        if (autoSizing.fontSize || autoSizing.lineHeight) {
+          const charHeight = viewportHeight / rows;
+          newFontSize = charHeight;
+          newLineHeight = 1;
+        }
+        if (autoSizing.letterSpacing) {
+          const glyphAspect = 0.6;
+          const naturalGlyphWidth = newFontSize * glyphAspect;
+          const targetSpacing = (viewportWidth / cols) - naturalGlyphWidth;
+          newLetterSpacing = Math.max(-2, Math.min(8, targetSpacing / newFontSize));
+        }
       }
       
-      if (autoSizing.letterSpacing) {
-        const glyphAspect = 0.6; // Typical monospace ratio
-        const naturalGlyphWidth = newFontSize * glyphAspect;
-        const targetSpacing = (viewportWidth / cols) - naturalGlyphWidth;
-        newLetterSpacing = Math.max(-2, Math.min(8, targetSpacing / newFontSize));
-      }
+      // Apply bounds
+      newFontSize = Math.max(4, Math.min(128, newFontSize));
+      newLineHeight = Math.max(0.5, Math.min(3, newLineHeight));
+      newLetterSpacing = Math.max(-2, Math.min(8, newLetterSpacing));
       
-      if (newFontSize !== settings.fontSize || newLetterSpacing !== settings.letterSpacing) {
+      if (newFontSize !== settings.fontSize || newLetterSpacing !== settings.letterSpacing || newLineHeight !== settings.lineHeight) {
         setSettings(prev => ({
           ...prev,
-          fontSize: Math.max(4, Math.min(128, newFontSize)),
-          letterSpacing: newLetterSpacing
+          fontSize: newFontSize,
+          letterSpacing: newLetterSpacing,
+          lineHeight: newLineHeight
         }));
       }
     }
-  }, [settings.fontSize, settings.letterSpacing, autoSizing, pixelStep]);
+  }, [settings.fontSize, settings.letterSpacing, settings.lineHeight, autoSizing, pixelStep]);
 
   // Process video frame to ASCII
   const processFrame = useCallback(() => {
@@ -251,8 +286,15 @@ export const AsciiConverter: React.FC = () => {
       ${settings.grayscale ? 'grayscale(100%)' : ''}
     `;
 
-    // Draw video frame to canvas
-    ctx.drawImage(video, 0, 0, width, height);
+    // Handle camera mirroring
+    if (settings.mirrorCamera) {
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, -width, 0, width, height);
+      ctx.restore();
+    } else {
+      ctx.drawImage(video, 0, 0, width, height);
+    }
     
     // Get image data
     const imageData = ctx.getImageData(0, 0, width, height);
@@ -378,6 +420,10 @@ export const AsciiConverter: React.FC = () => {
         newSettings.letterSpacing = (Math.random() * 10) - 2;
         setAutoSizing(prev => ({ ...prev, letterSpacing: false }));
       }
+      if (randomSettings.controls.lineHeight) {
+        newSettings.lineHeight = Math.random() * 2.5 + 0.5;
+        setAutoSizing(prev => ({ ...prev, lineHeight: false }));
+      }
       if (randomSettings.controls.contrast) {
         newSettings.contrast = Math.floor(Math.random() * 400);
       }
@@ -392,6 +438,9 @@ export const AsciiConverter: React.FC = () => {
       }
       if (randomSettings.controls.grayscale) {
         newSettings.grayscale = Math.random() > 0.5;
+      }
+      if (randomSettings.controls.mirrorCamera) {
+        newSettings.mirrorCamera = Math.random() > 0.5;
       }
       if (randomSettings.controls.foregroundColor) {
         newSettings.foregroundColor = `#${Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')}`;
@@ -477,11 +526,12 @@ export const AsciiConverter: React.FC = () => {
       <div className="fixed inset-0 flex items-center justify-center">
         <pre
           ref={asciiRef}
-          className="leading-none whitespace-pre overflow-hidden select-none animate-flicker"
+          className="whitespace-pre overflow-hidden select-none animate-flicker"
           style={{
             fontFamily: settings.fontFamily,
             fontSize: `${settings.fontSize}px`,
             letterSpacing: `${settings.letterSpacing}em`,
+            lineHeight: settings.lineHeight,
             color: settings.foregroundColor,
             backgroundColor: settings.backgroundColor,
             textShadow: '0 0 10px currentColor'
@@ -570,6 +620,21 @@ export const AsciiConverter: React.FC = () => {
                 className="mt-2"
               />
             </div>
+            <div>
+              <Label htmlFor="lineHeight">Line Height: {settings.lineHeight.toFixed(2)}</Label>
+              <Slider
+                id="lineHeight"
+                min={0.5}
+                max={3}
+                step={0.01}
+                value={[settings.lineHeight]}
+                onValueChange={([value]) => {
+                  setSettings(prev => ({ ...prev, lineHeight: value }));
+                  setAutoSizing(prev => ({ ...prev, lineHeight: false }));
+                }}
+                className="mt-2"
+              />
+            </div>
           </div>
 
           {/* Visual Controls */}
@@ -625,6 +690,14 @@ export const AsciiConverter: React.FC = () => {
                 id="grayscale"
                 checked={settings.grayscale}
                 onCheckedChange={(checked) => setSettings(prev => ({ ...prev, grayscale: checked }))}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="mirrorCamera">Mirror Camera</Label>
+              <Switch
+                id="mirrorCamera"
+                checked={settings.mirrorCamera}
+                onCheckedChange={(checked) => setSettings(prev => ({ ...prev, mirrorCamera: checked }))}
               />
             </div>
           </div>
