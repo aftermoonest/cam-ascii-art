@@ -196,7 +196,18 @@ export const AsciiConverter: React.FC = () => {
     return chars[Math.max(0, Math.min(index, chars.length - 1))];
   }, [settings.invert]);
 
-  // Auto-sizing logic for full screen coverage
+  // Measure glyph aspect ratio for current font
+  const measureGlyphAspect = useCallback((fontFamily: string, fontSize: number): number => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return 0.6; // fallback
+    
+    ctx.font = `${fontSize}px "${fontFamily}", monospace`;
+    const metrics = ctx.measureText('M');
+    return metrics.width / fontSize;
+  }, []);
+
+  // Step-by-step sizing routine without cropping
   const calculateAutoSize = useCallback(() => {
     if (!videoRef.current) return;
     
@@ -205,50 +216,87 @@ export const AsciiConverter: React.FC = () => {
     const viewportHeight = window.innerHeight;
     
     if (video.videoWidth && video.videoHeight) {
+      // Step 2: Compute how many ASCII cells the sampled frame contains
       const rows = Math.floor(video.videoHeight / pixelStep);
       const cols = Math.floor(video.videoWidth / pixelStep);
       
-      // Calculate aspect ratios
-      const videoAspect = video.videoWidth / video.videoHeight;
-      const viewportAspect = viewportWidth / viewportHeight;
+      // Step 1: Read live data
+      const currentFontSize = settings.fontSize;
+      const currentLetterSpacing = settings.letterSpacing;
+      const currentLineHeight = settings.lineHeight;
+      const glyphAspect = measureGlyphAspect(settings.fontFamily, currentFontSize);
       
-      let newFontSize = settings.fontSize;
-      let newLetterSpacing = settings.letterSpacing;
-      let newLineHeight = settings.lineHeight;
+      // Step 3: Turn sliders into physical cell dimensions
+      const cellHeight = currentFontSize * currentLineHeight;
+      const glyphWidth = currentFontSize * glyphAspect;
+      const cellWidth = glyphWidth + (currentLetterSpacing * currentFontSize);
       
-      // Always fill screen - determine which dimension constrains us
-      if (videoAspect > viewportAspect) {
-        // Video is wider - constrain by width
-        if (autoSizing.fontSize || autoSizing.letterSpacing) {
-          const glyphAspect = 0.6;
-          const charWidth = viewportWidth / cols;
-          newFontSize = charWidth / glyphAspect;
-          newLetterSpacing = 0;
+      // Step 4: Check if grid fits viewport
+      const gridWidth = cols * cellWidth;
+      const gridHeight = rows * cellHeight;
+      
+      if (gridWidth <= viewportWidth && gridHeight <= viewportHeight) {
+        // Grid already fits, just center it
+        return;
+      }
+      
+      // Step 5: Shrink or grow while respecting user locks
+      let newFontSize = currentFontSize;
+      let newLetterSpacing = currentLetterSpacing;
+      let newLineHeight = currentLineHeight;
+      
+      // Calculate scale factors needed for each dimension
+      const widthScale = viewportWidth / gridWidth;
+      const heightScale = viewportHeight / gridHeight;
+      
+      // Use the smaller scale to ensure both dimensions fit
+      const scale = Math.min(widthScale, heightScale);
+      
+      if (!autoSizing.fontSize && !autoSizing.letterSpacing && !autoSizing.lineHeight) {
+        // All locked by user, no changes
+        return;
+      }
+      
+      if (autoSizing.fontSize && autoSizing.letterSpacing && autoSizing.lineHeight) {
+        // None locked, scale everything proportionally
+        newFontSize = currentFontSize * scale;
+        newLetterSpacing = currentLetterSpacing * scale;
+        newLineHeight = currentLineHeight;
+      } else if (!autoSizing.fontSize) {
+        // Font size locked, adjust spacing and line height
+        const newGlyphWidth = newFontSize * glyphAspect;
+        if (autoSizing.letterSpacing) {
+          newLetterSpacing = (viewportWidth / cols - newGlyphWidth) / newFontSize;
         }
         if (autoSizing.lineHeight) {
-          newLineHeight = (viewportHeight / rows) / newFontSize;
+          newLineHeight = viewportHeight / (rows * newFontSize);
         }
-      } else {
-        // Video is taller - constrain by height
-        if (autoSizing.fontSize || autoSizing.lineHeight) {
-          const charHeight = viewportHeight / rows;
-          newFontSize = charHeight;
-          newLineHeight = 1;
+      } else if (!autoSizing.letterSpacing) {
+        // Letter spacing locked, adjust font size and line height
+        const targetCellWidth = viewportWidth / cols;
+        const targetLetterSpacingPx = currentLetterSpacing * newFontSize;
+        newFontSize = (targetCellWidth - targetLetterSpacingPx) / glyphAspect;
+        if (autoSizing.lineHeight) {
+          newLineHeight = viewportHeight / (rows * newFontSize);
         }
+      } else if (!autoSizing.lineHeight) {
+        // Line height locked, adjust font size and spacing
+        newFontSize = viewportHeight / (rows * currentLineHeight);
         if (autoSizing.letterSpacing) {
-          const glyphAspect = 0.6;
-          const naturalGlyphWidth = newFontSize * glyphAspect;
-          const targetSpacing = (viewportWidth / cols) - naturalGlyphWidth;
-          newLetterSpacing = Math.max(-2, Math.min(8, targetSpacing / newFontSize));
+          const newGlyphWidth = newFontSize * glyphAspect;
+          newLetterSpacing = (viewportWidth / cols - newGlyphWidth) / newFontSize;
         }
       }
       
-      // Apply bounds
+      // Apply bounds and clamp values
       newFontSize = Math.max(4, Math.min(128, newFontSize));
       newLineHeight = Math.max(0.5, Math.min(3, newLineHeight));
       newLetterSpacing = Math.max(-2, Math.min(8, newLetterSpacing));
       
-      if (newFontSize !== settings.fontSize || newLetterSpacing !== settings.letterSpacing || newLineHeight !== settings.lineHeight) {
+      // Update settings if changed
+      if (Math.abs(newFontSize - currentFontSize) > 0.1 || 
+          Math.abs(newLetterSpacing - currentLetterSpacing) > 0.01 || 
+          Math.abs(newLineHeight - currentLineHeight) > 0.01) {
         setSettings(prev => ({
           ...prev,
           fontSize: newFontSize,
@@ -257,7 +305,7 @@ export const AsciiConverter: React.FC = () => {
         }));
       }
     }
-  }, [settings.fontSize, settings.letterSpacing, settings.lineHeight, autoSizing, pixelStep]);
+  }, [settings.fontSize, settings.letterSpacing, settings.lineHeight, settings.fontFamily, autoSizing, pixelStep, measureGlyphAspect]);
 
   // Process video frame to ASCII
   const processFrame = useCallback(() => {
